@@ -1,7 +1,5 @@
 # Pulumi Proxmox K3s Cluster Setup
 
-Using TechnoTim's k3s ansible playbook, and pulumi to orchestrate the cluster
-
 This Pulumi project automates setting up a Kubernetes cluster on Proxmox VMs using K3s and Ansible. It provides a complete infrastructure-as-code solution for:
 
 1. Creating multiple Proxmox VMs (masters and workers)
@@ -60,6 +58,19 @@ This interactive script will:
 - Set up Ansible integration with Techno Tim's playbook
 - Allow you to customize CNI and other cluster features
 - Optionally deploy the stack when configuration is complete
+- Detect and use existing configuration values from your Pulumi stack, 
+  making it easy to update existing configurations
+
+The setup script fully leverages Pulumi's configuration system, reading existing values from the Pulumi.dev.yaml file when available. This approach allows you to:
+
+1. Keep all configurations in the Pulumi stack
+2. View your full configuration with `pulumi config`
+3. Easily modify settings with `pulumi config set` commands
+4. Run the setup script multiple times to modify only specific settings
+5. Have a consistent source of truth for all configuration values
+
+The setup script handles special configuration requirements, such as parameters that start with `--`, ensuring
+that everything is properly set up for Pulumi.
 
 **Note**: If you prefer to configure things manually instead of using the guided setup script, you can use the Pulumi commands in the Configuration section below.
 

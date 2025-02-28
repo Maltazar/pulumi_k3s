@@ -3,6 +3,13 @@ Configuration for the Pulumi program to set up Proxmox VMs and k3s.
 """
 
 import pulumi
+from pulumi import Config
+
+# Create Config objects for each namespace
+proxmox = Config("proxmox")
+vm = Config("vm")
+k3s = Config("k3s")
+ansible = Config("ansible")
 
 # Proxmox configuration
 proxmox_config = {
