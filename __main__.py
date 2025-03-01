@@ -193,24 +193,14 @@ def create_vm_with_deps(
     # Create resource options with dependencies if specified
     opts = None
     if deps:
-        # Create resource options with dependencies and custom timeouts
+        # Create resource options with dependencies
         opts = pulumi.ResourceOptions(
             depends_on=deps,
-            custom_timeouts=pulumi.CustomTimeouts(
-                create="20m",  # Allow 20 minutes for creation (including startup)
-                update="15m",  # Allow 15 minutes for updates
-                delete="10m",  # Allow 10 minutes for deletion
-            ),
             delete_before_replace=True,  # Delete old VM before creating a new one
         )
     else:
-        # Create resource options with just custom timeouts
+        # Create basic resource options
         opts = pulumi.ResourceOptions(
-            custom_timeouts=pulumi.CustomTimeouts(
-                create="20m",
-                update="15m",
-                delete="10m",
-            ),
             delete_before_replace=True,
         )
     
@@ -331,6 +321,9 @@ def provision_vm(vm: ProxmoxVM, name: str, ip_address: str) -> bool:
     """
     print(f"Provisioning VM {name} at {ip_address}...")
     
+    # By default, assume QEMU guest agent is not installed
+    vm.set_agent_installed(False)
+    
     # Check if we should use admin user for subsequent connections
     # We'll try the default user first, then fall back to admin user if configured
     using_admin_user = vm_base_config.get("create_admin_user", False) and vm_base_config.get("admin_username")
@@ -424,6 +417,24 @@ def provision_vm(vm: ProxmoxVM, name: str, ip_address: str) -> bool:
                 
                 if success:
                     print(f"Successfully provisioned {name}")
+                    
+                    # Check if QEMU guest agent is installed after provisioning
+                    # The provision method should install the QEMU guest agent
+                    try:
+                        # Check if qemu-guest-agent is installed
+                        agent_check_cmd = "dpkg -l | grep qemu-guest-agent || rpm -qa | grep qemu-guest-agent"
+                        exit_code, output, error = ssh_client.execute_command(agent_check_cmd)
+                        if exit_code == 0 and "qemu-guest-agent" in output:
+                            print(f"QEMU guest agent detected on {name}, enabling graceful shutdown/reboot")
+                            vm.set_agent_installed(True)
+                        else:
+                            print(f"QEMU guest agent not detected on {name}, using hard power operations")
+                            vm.set_agent_installed(False)
+                    except Exception as e:
+                        print(f"Error checking QEMU guest agent on {name}: {str(e)}")
+                        # Default to assuming agent is not installed if check fails
+                        vm.set_agent_installed(False)
+                    
                     break
                 else:
                     print(f"Provisioning {name} returned false, retrying...")
@@ -609,6 +620,13 @@ def setup_k3s_cluster(
                     success = ansible.run_playbook()
                     if success:
                         print("Successfully set up k3s cluster with Ansible")
+                        
+                        # After successful k3s setup, mark all VMs as having the QEMU guest agent
+                        # This ensures we use graceful shutdown/reboot operations
+                        print("Setting all VMs to use graceful shutdown/reboot operations")
+                        for vm in all_vms:
+                            vm.set_agent_installed(True)
+                            
                         break
                     else:
                         print(f"Ansible playbook failed, retrying in {retry_delay_seconds} seconds...")

@@ -54,12 +54,13 @@ class ProxmoxVM:
         disk_storage: str = "local-lvm",
         ssh_public_key: str = None,
         network_bridge: str = "vmbr0",
-        vlan_tag: Optional[int] = None,  # Added vlan_tag parameter
+        vlan_tag: Optional[int] = None,  # VLAN tag parameter
         ip_address: Optional[str] = None,
         gateway: Optional[str] = None,
         dns_server: str = "8.8.8.8",
         vm_id: Optional[int] = None,
-        start_on_create: bool = True,  # Added parameter to control VM startup
+        start_on_create: bool = True,  # Parameter to control VM startup
+        ssh_user: str = "ubuntu",  # Add ssh_user parameter with default
         opts: Optional[pulumi.ResourceOptions] = None,  # Resource options for the VM
     ):
         """
@@ -83,6 +84,7 @@ class ProxmoxVM:
             dns_server: DNS server
             vm_id: Specific VM ID to assign to the new VM
             start_on_create: Whether to start the VM after creation
+            ssh_user: SSH user for cloud-init (default: "ubuntu")
             opts: Resource options for the VM
         """
         self.provider = provider
@@ -130,10 +132,13 @@ class ProxmoxVM:
                 {
                     "bridge": network_bridge,
                     "model": "virtio",
+                    "enabled": True,  # Make sure the device is enabled
                 }
             ],
             "agent": {
                 "enabled": True,
+                # Add timeout setting to allow time for agent to respond
+                "timeout": "60s",
             },
             "on_boot": True,
             # Set the VM to start or not based on configuration
@@ -142,7 +147,10 @@ class ProxmoxVM:
         
         # Add VLAN tag if provided
         if vlan_tag is not None:
-            vm_args["network_devices"][0]["vlan_tag"] = vlan_tag
+            # Proxmox VE API expects the VLAN tag as a parameter on the network device
+            # Setting as 'tag' parameter according to Proxmox documentation
+            vm_args["network_devices"][0]["tag"] = int(vlan_tag)
+            pulumi.log.info(f"Setting VLAN tag {vlan_tag} for VM {name}")
             
         # Add specific VM ID if provided
         if vm_id is not None:
@@ -168,40 +176,42 @@ class ProxmoxVM:
         # Add initialization configuration if SSH key is provided
         if ssh_public_key:
             init_config = {
-                "type": "nocloud",
+                "type": "nocloud",  # 'nocloud' for linux
                 "user_account": {
-                    "username": "ubuntu",  # Default user for cloud-init
+                    "username": ssh_user,  # Use the provided ssh_user instead of hardcoding "ubuntu"
                     "keys": [ssh_public_key],
                 }
             }
             
             # Add network configuration if static IP is provided
             if ip_address and gateway:
+                # Extract CIDR if present, default to /24 if not
+                cidr = ip_address.split("/")[1] if "/" in ip_address else "24"
+                ip = ip_address.split("/")[0] if "/" in ip_address else ip_address
+                
+                # Create IP configurations in the format expected by Pulumi Proxmox provider
                 init_config["ip_configs"] = [
                     {
                         "ipv4": {
-                            "address": ip_address,
+                            "address": f"{ip}/{cidr}",
                             "gateway": gateway
                         }
                     }
                 ]
                 
-                # Add DNS configuration
+                # Add DNS configuration with 'servers' as a list
                 init_config["dns"] = {
-                    "servers": [dns_server]
+                    "servers": [dns_server]  # Use 'servers' (array) instead of 'server'
                 }
+                
+                pulumi.log.info(f"Setting static IP for VM {name}: {ip}/{cidr} with gateway {gateway}")
                 
             vm_args["initialization"] = init_config
 
-        # Create default resource options if none were provided
+        # Create resource options with just provider
         if opts is None:
             opts = pulumi.ResourceOptions(
                 provider=provider,
-                custom_timeouts=pulumi.CustomTimeouts(
-                    create="15m",  # Allow 15 minutes for creation (including startup)
-                    update="15m",  # Allow 15 minutes for updates
-                    delete="10m",  # Allow 10 minutes for deletion
-                ),
                 delete_before_replace=True,  # Delete old VM before creating a new one
             )
         else:
@@ -212,19 +222,6 @@ class ProxmoxVM:
                     pulumi.ResourceOptions(provider=provider)
                 )
             
-            # Also ensure timeouts are set
-            if not hasattr(opts, 'custom_timeouts') or opts.custom_timeouts is None:
-                opts = pulumi.ResourceOptions.merge(
-                    opts,
-                    pulumi.ResourceOptions(
-                        custom_timeouts=pulumi.CustomTimeouts(
-                            create="15m",
-                            update="15m",
-                            delete="10m",
-                        )
-                    )
-                )
-        
         # Log what we're doing
         if start_on_create:
             pulumi.log.info(f"Creating VM {name} (ID: {vm_id}) and starting it (may take several minutes)...")
@@ -247,7 +244,8 @@ class ProxmoxVM:
             installed: Whether the agent is installed
         """
         self._has_agent = installed
-        
+        pulumi.log.info(f"VM {self.name} agent status set to: {'installed' if installed else 'not installed'}")
+    
     @property
     def has_agent(self) -> bool:
         """
@@ -410,6 +408,14 @@ def create_proxmox_vm(
             "dns_server": ip_config.get("dns_server", "8.8.8.8"),
         }
     
+    # Convert vlan_tag to integer if provided
+    vlan_tag = None
+    if "vlan_tag" in config and config["vlan_tag"] is not None:
+        try:
+            vlan_tag = int(config["vlan_tag"])
+        except (ValueError, TypeError):
+            pulumi.log.warn(f"Invalid VLAN tag value: {config['vlan_tag']}. VLAN tag must be an integer.")
+    
     # Create and return the VM with the provided options
     return ProxmoxVM(
         provider=provider,
@@ -422,9 +428,11 @@ def create_proxmox_vm(
         disk_size=config.get("disk_size", "20G"),
         disk_storage=config.get("disk_storage", "local-lvm"),
         ssh_public_key=config.get("ssh_public_key", None),
-        vlan_tag=config.get("vlan_tag", None),
+        vlan_tag=vlan_tag,
+        network_bridge=config.get("network_bridge", "vmbr0"),
         vm_id=vm_id,
         start_on_create=start_on_create,  # Pass through the start parameter
+        ssh_user=config.get("ssh_user", "ubuntu"),  # Pass through the ssh_user parameter
         opts=opts,  # Pass through the resource options
         **ip_args
     ) 
