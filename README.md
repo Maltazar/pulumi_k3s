@@ -9,7 +9,7 @@ This Pulumi project automates setting up a Kubernetes cluster on Proxmox VMs usi
 ## Prerequisites
 
 - [Pulumi CLI](https://www.pulumi.com/docs/install/) installed
-- Python 3.8+
+- Python 3.12+
 - Access to a Proxmox server
 - SSH keys generated (`ssh-keygen -t rsa -b 4096`)
 - A VM template in Proxmox with cloud-init support
@@ -40,23 +40,23 @@ This script will:
 
 ### 2. Example Setup Script
 
-After bootstrapping, use the `setup-example.sh` script for guided configuration and deployment:
+After bootstrapping, use the `setup-config.sh` script for guided configuration and deployment:
 
 ```bash
 # Make the script executable
-chmod +x setup-example.sh
+chmod +x setup-config.sh
 
 # Run the setup script
-./setup-example.sh
+./setup-config.sh
 
 # Skip prompts for existing configuration values
-SKIP_EXISTING_CONFIG=1 ./setup-example.sh
+SKIP_EXISTING_CONFIG=1 ./setup-config.sh
 
 # Enable debug logging
-DEBUG=1 ./setup-example.sh
+DEBUG=1 ./setup-config.sh
 
 # Combine flags
-SKIP_EXISTING_CONFIG=1 DEBUG=1 ./setup-example.sh
+SKIP_EXISTING_CONFIG=1 DEBUG=1 ./setup-config.sh
 ```
 
 This interactive script will:
@@ -227,8 +227,8 @@ The simplest way to deploy this project is using the provided helper scripts:
 
 2. Run the interactive setup script which will guide you through configuration and deployment:
    ```bash
-   chmod +x setup-example.sh
-   ./setup-example.sh
+   chmod +x setup-config.sh
+   ./setup-config.sh
    ```
 
 ### Manual Deployment
@@ -305,3 +305,61 @@ You can customize the deployment by modifying the configuration values or editin
 - If Ansible inventory files are incorrectly generated, check the `~/k3s-ansible/inventory/my-cluster` directory
 - To manually run the Ansible playbook after deployment: `cd ~/k3s-ansible && ansible-playbook -i inventory/my-cluster site.yml -b --become-user=root`
 - Check Ansible logs for any errors by examining the output during the Pulumi deployment 
+
+## Managing Pulumi State
+
+If you encounter issues with Pulumi state or need to perform advanced state operations, these commands will help:
+
+### Refreshing Pulumi State
+
+If you've made changes to your infrastructure outside of Pulumi (like manually deleting VMs in Proxmox), refresh Pulumi's state:
+
+```bash
+pulumi refresh
+```
+
+This command will update Pulumi's state file to match the actual infrastructure without making any changes to the resources.
+
+### Handling Manually Deleted Resources
+
+If you manually deleted VMs or other resources and now Pulumi is failing with errors like "the requested resource does not exist":
+
+1. First, refresh Pulumi's state to acknowledge the missing resources:
+   ```bash
+   pulumi refresh
+   ```
+
+2. Then run your update to recreate the resources:
+   ```bash
+   pulumi up
+   ```
+
+### Advanced State Management
+
+For more fine-grained control over Pulumi state:
+
+- **Remove a specific resource from state** (when it no longer exists and can't be refreshed):
+  ```bash
+  pulumi state delete <resource-URN>
+  ```
+  You can find the URN in error messages or by running `pulumi stack export`
+
+- **View detailed state information**:
+  ```bash
+  pulumi stack export > pulumi-state.json
+  ```
+
+- **Import existing resources into Pulumi**:
+  ```bash
+  pulumi import <resource-type> <resource-name> <resource-id>
+  ```
+  
+### Force Resource Replacement
+
+If you need to recreate a specific resource without destroying everything:
+
+```bash
+pulumi up --target <resource-URN> --replace
+```
+
+This is useful when you need to recreate a single VM without rebuilding your entire cluster. 
