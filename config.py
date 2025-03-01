@@ -27,6 +27,9 @@ vm_base_config = {
     "cores": vm_config_obj.get_int("cores") or 2,
     "memory": vm_config_obj.get_int("memory") or 4096,  # MB
     "disk_size": vm_config_obj.get("disk_size") or "20G",
+    "disk_storage": vm_config_obj.get("disk_storage") or "local-lvm",  # Storage location in Proxmox
+    "vm_id_min": vm_config_obj.get_int("vm_id_min") or None,  # Minimum VM ID to use
+    "vm_id_max": vm_config_obj.get_int("vm_id_max") or None,  # Maximum VM ID to use
     "ssh_public_key": vm_config_obj.require("ssh_public_key"),
     "ssh_private_key_path": vm_config_obj.require("ssh_private_key_path"),
     "ssh_user": vm_config_obj.get("ssh_user") or "ubuntu",

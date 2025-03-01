@@ -48,6 +48,15 @@ chmod +x setup-example.sh
 
 # Run the setup script
 ./setup-example.sh
+
+# Skip prompts for existing configuration values
+SKIP_EXISTING_CONFIG=1 ./setup-example.sh
+
+# Enable debug logging
+DEBUG=1 ./setup-example.sh
+
+# Combine flags
+SKIP_EXISTING_CONFIG=1 DEBUG=1 ./setup-example.sh
 ```
 
 This interactive script will:
@@ -60,6 +69,10 @@ This interactive script will:
 - Optionally deploy the stack when configuration is complete
 - Detect and use existing configuration values from your Pulumi stack, 
   making it easy to update existing configurations
+
+The script supports the following environment variables:
+- `SKIP_EXISTING_CONFIG=1`: Only prompt for configuration values that don't exist yet
+- `DEBUG=1`: Enable detailed debug logging
 
 The setup script fully leverages Pulumi's configuration system, reading existing values from the Pulumi.dev.yaml file when available. This approach allows you to:
 
@@ -104,10 +117,15 @@ pulumi config set vm:template your-template-id  # e.g., "pve/vm/9000"
 pulumi config set vm:cores 2                    # Default cores per VM
 pulumi config set vm:memory 4096                # Default memory per VM (MB)
 pulumi config set vm:disk_size 20G              # Default disk size
+pulumi config set vm:disk_storage local-lvm     # Storage location in Proxmox
 pulumi config set vm:ssh_user ubuntu            # Username in the template
 pulumi config set vm:ssh_public_key "$(cat ~/.ssh/id_rsa.pub)"
 pulumi config set vm:ssh_private_key_path ~/.ssh/id_rsa
 pulumi config set vm:network_bridge vmbr0       # Network bridge to use
+
+# Optional: VM ID range configuration
+pulumi config set vm:vm_id_min 1000             # Minimum VM ID to use
+pulumi config set vm:vm_id_max 1050             # Maximum VM ID to use
 ```
 
 ### K3s Cluster Configuration

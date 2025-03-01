@@ -72,6 +72,24 @@ def calculate_static_ips() -> Dict[str, List[Dict[str, str]]]:
 # Calculate static IP configurations (if enabled)
 ip_configs = calculate_static_ips()
 
+# Generate VM IDs from the configured range if specified
+vm_id_min = vm_base_config.get("vm_id_min")
+vm_id_max = vm_base_config.get("vm_id_max")
+vm_ids = []
+
+if vm_id_min is not None and vm_id_max is not None:
+    total_vms = k3s_cluster_config["master_count"] + k3s_cluster_config["worker_count"]
+    # Check if the range is large enough for all VMs
+    if vm_id_max - vm_id_min + 1 < total_vms:
+        pulumi.log.warn(f"VM ID range {vm_id_min}-{vm_id_max} is not large enough for {total_vms} VMs. Some VMs will be assigned IDs automatically.")
+        # Generate as many IDs as possible from the range
+        vm_ids = list(range(vm_id_min, vm_id_max + 1))
+    else:
+        # Generate all IDs from the range
+        vm_ids = list(range(vm_id_min, vm_id_min + total_vms))
+    
+    pulumi.log.info(f"Using VM IDs: {vm_ids}")
+
 # Create master nodes
 master_vms = []
 for i in range(k3s_cluster_config["master_count"]):
@@ -88,6 +106,9 @@ for i in range(k3s_cluster_config["master_count"]):
     # Get IP configuration (if using static IPs)
     master_ip_config = ip_configs["masters"][i] if ip_configs["masters"] and i < len(ip_configs["masters"]) else None
     
+    # Get VM ID if available
+    vm_id = vm_ids[i] if vm_ids and i < len(vm_ids) else None
+    
     # Create the VM
     master_vm = create_proxmox_vm(
         provider=proxmox_provider,
@@ -95,6 +116,7 @@ for i in range(k3s_cluster_config["master_count"]):
         node=proxmox_config["node"],
         template_id=vm_base_config["template"],
         ip_config=master_ip_config,
+        vm_id=vm_id,
     )
     
     master_vms.append(master_vm)
@@ -115,6 +137,10 @@ for i in range(k3s_cluster_config["worker_count"]):
     # Get IP configuration (if using static IPs)
     worker_ip_config = ip_configs["workers"][i] if ip_configs["workers"] and i < len(ip_configs["workers"]) else None
     
+    # Get VM ID if available (offset by number of master nodes)
+    master_count = k3s_cluster_config["master_count"]
+    vm_id = vm_ids[master_count + i] if vm_ids and (master_count + i) < len(vm_ids) else None
+    
     # Create the VM
     worker_vm = create_proxmox_vm(
         provider=proxmox_provider,
@@ -122,6 +148,7 @@ for i in range(k3s_cluster_config["worker_count"]):
         node=proxmox_config["node"],
         template_id=vm_base_config["template"],
         ip_config=worker_ip_config,
+        vm_id=vm_id,
     )
     
     worker_vms.append(worker_vm)
@@ -300,7 +327,7 @@ def setup_k3s_cluster(
                 print("Failed to run Ansible playbook.")
     
     # Register the callback to execute once all IPs are available
-    pulumi.All(*all_ips).apply(on_ips_available)
+    pulumi.Output.all(*all_ips).apply(on_ips_available)
 
 # Set up the k3s cluster using Ansible
 setup_k3s_cluster(master_ips, worker_ips)

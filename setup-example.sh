@@ -12,6 +12,11 @@ NC='\033[0m' # No Color
 # Enable debug mode with DEBUG=1 ./setup-example.sh
 DEBUG=${DEBUG:-0}
 
+# Skip prompts for existing configuration values
+# Set to 1 to only be prompted for values that don't exist in the Pulumi config
+# Example: SKIP_EXISTING_CONFIG=1 ./setup-example.sh
+SKIP_EXISTING_CONFIG=${SKIP_EXISTING_CONFIG:-0}
+
 debug_log() {
     if [ "$DEBUG" -eq 1 ]; then
         echo -e "${GRAY}[DEBUG] $1${NC}" >&2
@@ -21,6 +26,11 @@ debug_log() {
 echo -e "${BLUE}=== Pulumi Proxmox K3s Deployment Example ===${NC}"
 echo -e "${BLUE}This script will set up a complete Pulumi Proxmox K3s deployment${NC}"
 echo -e "${BLUE}=============================================${NC}\n"
+
+# Show if we're skipping existing config prompts
+if [ "$SKIP_EXISTING_CONFIG" -eq 1 ]; then
+    echo -e "${YELLOW}Running in skip mode - will only prompt for missing configuration values${NC}\n"
+fi
 
 # Check if venv directory exists
 if [ ! -d "venv" ]; then
@@ -89,6 +99,26 @@ get_config_or_default() {
     fi
 }
 
+# Function to determine whether to prompt for a value
+# Returns 0 (true) if should prompt, 1 (false) if should skip prompt
+should_prompt() {
+    local key=$1
+    
+    # Always prompt if SKIP_EXISTING_CONFIG is disabled
+    if [ "$SKIP_EXISTING_CONFIG" -ne 1 ]; then
+        return 0
+    fi
+    
+    # If SKIP_EXISTING_CONFIG is enabled, only prompt if the config doesn't exist
+    if pulumi config get "$key" &>/dev/null; then
+        debug_log "Skipping prompt for existing config: $key"
+        return 1
+    else
+        debug_log "Will prompt for missing config: $key"
+        return 0
+    fi
+}
+
 # Check for existing Pulumi stack and configuration
 has_existing_stack=false
 has_config=false
@@ -124,15 +154,28 @@ echo -e "${BLUE}Configuring Proxmox connection settings...${NC}"
 
 # Prompt for Proxmox details
 echo -e "${YELLOW}Enter your Proxmox details:${NC}"
-stored_endpoint=$(get_config_or_default "proxmox:endpoint" "")
-echo -n "Proxmox endpoint URL [$stored_endpoint]: "
-read input_endpoint
-proxmox_endpoint=${input_endpoint:-"$stored_endpoint"}
 
+# Proxmox endpoint
+stored_endpoint=$(get_config_or_default "proxmox:endpoint" "")
+if should_prompt "proxmox:endpoint"; then
+    echo -n "Proxmox endpoint URL [$stored_endpoint]: "
+    read input_endpoint
+    proxmox_endpoint=${input_endpoint:-"$stored_endpoint"}
+else
+    proxmox_endpoint="$stored_endpoint"
+    echo -e "Using existing Proxmox endpoint URL: ${GREEN}$proxmox_endpoint${NC}"
+fi
+
+# Proxmox username
 stored_username=$(get_config_or_default "proxmox:username" "")
-echo -n "Proxmox username (e.g., user@pam) [$stored_username]: "
-read input_username
-proxmox_username=${input_username:-"$stored_username"}
+if should_prompt "proxmox:username"; then
+    echo -n "Proxmox username (e.g., user@pam) [$stored_username]: "
+    read input_username
+    proxmox_username=${input_username:-"$stored_username"}
+else
+    proxmox_username="$stored_username"
+    echo -e "Using existing Proxmox username: ${GREEN}$proxmox_username${NC}"
+fi
 
 # Check that username is not empty
 while [ -z "$proxmox_username" ]; do
@@ -142,10 +185,7 @@ while [ -z "$proxmox_username" ]; do
 done
 
 # Get Proxmox password - special handling for secrets
-if pulumi config get proxmox:password &>/dev/null; then
-    echo -e "${GREEN}Using existing secret for proxmox:password${NC}"
-    proxmox_password=""
-else
+if should_prompt "proxmox:password" && ! pulumi config get proxmox:password &>/dev/null; then
     echo -n "Proxmox password: "
     read -s proxmox_password
     echo
@@ -157,12 +197,23 @@ else
         read -s proxmox_password
         echo
     done
+else
+    if pulumi config get proxmox:password &>/dev/null; then
+        echo -e "Using existing secret for ${GREEN}proxmox:password${NC}"
+    fi
+    proxmox_password=""
 fi
 
+# Proxmox node
 stored_node=$(get_config_or_default "proxmox:node" "")
-echo -n "Proxmox node name [$stored_node]: "
-read input_node
-proxmox_node=${input_node:-"$stored_node"}
+if should_prompt "proxmox:node"; then
+    echo -n "Proxmox node name [$stored_node]: "
+    read input_node
+    proxmox_node=${input_node:-"$stored_node"}
+else
+    proxmox_node="$stored_node"
+    echo -e "Using existing Proxmox node name: ${GREEN}$proxmox_node${NC}"
+fi
 
 # Set Proxmox configuration
 safe_config_set "proxmox:endpoint" "$proxmox_endpoint"
@@ -181,9 +232,14 @@ echo -e "${BLUE}Configuring VM settings...${NC}"
 # VM Template
 echo -e "${YELLOW}Enter your VM template details:${NC}"
 stored_template=$(get_config_or_default "vm:template" "")
-echo -n "VM template ID [$stored_template]: "
-read input_template
-vm_template=${input_template:-"$stored_template"}
+if should_prompt "vm:template"; then
+    echo -n "VM template ID [$stored_template]: "
+    read input_template
+    vm_template=${input_template:-"$stored_template"}
+else
+    vm_template="$stored_template"
+    echo -e "Using existing VM template ID: ${GREEN}$vm_template${NC}"
+fi
 
 # Check that template is not empty
 while [ -z "$vm_template" ]; do
@@ -195,14 +251,24 @@ done
 # VM SSH Settings
 echo -e "${YELLOW}Configure SSH access to the VMs:${NC}"
 stored_ssh_user=$(get_config_or_default "vm:ssh_user" "")
-echo -n "SSH username [$stored_ssh_user]: "
-read input_ssh_user
-ssh_user=${input_ssh_user:-"$stored_ssh_user"}
+if should_prompt "vm:ssh_user"; then
+    echo -n "SSH username [$stored_ssh_user]: "
+    read input_ssh_user
+    ssh_user=${input_ssh_user:-"$stored_ssh_user"}
+else
+    ssh_user="$stored_ssh_user"
+    echo -e "Using existing SSH username: ${GREEN}$ssh_user${NC}"
+fi
 
 stored_ssh_private_key_path=$(get_config_or_default "vm:ssh_private_key_path" "$HOME/.ssh/id_rsa")
-echo -n "SSH private key path [$stored_ssh_private_key_path]: "
-read input_ssh_private_key_path
-ssh_private_key_path=${input_ssh_private_key_path:-"$stored_ssh_private_key_path"}
+if should_prompt "vm:ssh_private_key_path"; then
+    echo -n "SSH private key path [$stored_ssh_private_key_path]: "
+    read input_ssh_private_key_path
+    ssh_private_key_path=${input_ssh_private_key_path:-"$stored_ssh_private_key_path"}
+else
+    ssh_private_key_path="$stored_ssh_private_key_path"
+    echo -e "Using existing SSH private key path: ${GREEN}$ssh_private_key_path${NC}"
+fi
 
 # Check if the private key exists
 if [ ! -f "$ssh_private_key_path" ]; then
@@ -239,41 +305,115 @@ if [ ${#stored_ssh_public_key} -gt 40 ]; then
 else
     display_key="$stored_ssh_public_key"
 fi
-echo -n "SSH public key [$display_key]: "
-read input_ssh_public_key
-ssh_public_key=${input_ssh_public_key:-"$stored_ssh_public_key"}
+if should_prompt "vm:ssh_public_key"; then
+    echo -n "SSH public key [$display_key]: "
+    read input_ssh_public_key
+    ssh_public_key=${input_ssh_public_key:-"$stored_ssh_public_key"}
+else
+    ssh_public_key="$stored_ssh_public_key"
+    echo -e "Using existing SSH public key: ${GREEN}${display_key}${NC}"
+fi
 
 # VM Resources
 echo -e "${YELLOW}Configure VM resources:${NC}"
 stored_cores=$(get_config_or_default "vm:cores" "")
-echo -n "Default VM cores [$stored_cores]: "
-read input_cores
-vm_cores=${input_cores:-"$stored_cores"}
+if should_prompt "vm:cores"; then
+    echo -n "Default VM cores [$stored_cores]: "
+    read input_cores
+    vm_cores=${input_cores:-"$stored_cores"}
+else
+    vm_cores="$stored_cores"
+    echo -e "Using existing VM cores: ${GREEN}$vm_cores${NC}"
+fi
 
 stored_memory=$(get_config_or_default "vm:memory" "")
-echo -n "Default VM memory in MB [$stored_memory]: "
-read input_memory
-vm_memory=${input_memory:-"$stored_memory"}
+if should_prompt "vm:memory"; then
+    echo -n "Default VM memory in MB [$stored_memory]: "
+    read input_memory
+    vm_memory=${input_memory:-"$stored_memory"}
+else
+    vm_memory="$stored_memory"
+    echo -e "Using existing VM memory: ${GREEN}$vm_memory${NC}"
+fi
 
 stored_disk_size=$(get_config_or_default "vm:disk_size" "")
-echo -n "Default VM disk size [$stored_disk_size]: "
-read input_disk_size
-vm_disk_size=${input_disk_size:-"$stored_disk_size"}
+if should_prompt "vm:disk_size"; then
+    echo -n "Default VM disk size [$stored_disk_size]: "
+    read input_disk_size
+    vm_disk_size=${input_disk_size:-"$stored_disk_size"}
+else
+    vm_disk_size="$stored_disk_size"
+    echo -e "Using existing VM disk size: ${GREEN}$vm_disk_size${NC}"
+fi
+
+stored_disk_storage=$(get_config_or_default "vm:disk_storage" "")
+if should_prompt "vm:disk_storage"; then
+    echo -n "Default VM disk storage location [$stored_disk_storage]: "
+    read input_disk_storage
+    vm_disk_storage=${input_disk_storage:-"$stored_disk_storage"}
+else
+    vm_disk_storage="$stored_disk_storage"
+    echo -e "Using existing VM disk storage: ${GREEN}$vm_disk_storage${NC}"
+fi
 
 stored_network_bridge=$(get_config_or_default "vm:network_bridge" "")
-echo -n "VM network bridge [$stored_network_bridge]: "
-read input_network_bridge
-vm_network_bridge=${input_network_bridge:-"$stored_network_bridge"}
+if should_prompt "vm:network_bridge"; then
+    echo -n "VM network bridge [$stored_network_bridge]: "
+    read input_network_bridge
+    vm_network_bridge=${input_network_bridge:-"$stored_network_bridge"}
+else
+    vm_network_bridge="$stored_network_bridge"
+    echo -e "Using existing VM network bridge: ${GREEN}$vm_network_bridge${NC}"
+fi
+
+# VM ID range (optional)
+echo -e "${YELLOW}VM ID range (optional - leave empty to let Proxmox assign IDs automatically):${NC}"
+stored_vm_id_min=$(get_config_or_default "vm:vm_id_min" "")
+if should_prompt "vm:vm_id_min"; then
+    echo -n "Minimum VM ID (e.g., 1000) [$stored_vm_id_min]: "
+    read input_vm_id_min
+    vm_id_min=${input_vm_id_min:-"$stored_vm_id_min"}
+else
+    vm_id_min="$stored_vm_id_min"
+    if [ -n "$vm_id_min" ]; then
+        echo -e "Using existing minimum VM ID: ${GREEN}$vm_id_min${NC}"
+    else
+        echo -e "No minimum VM ID set - Proxmox will assign automatically"
+    fi
+fi
+
+stored_vm_id_max=$(get_config_or_default "vm:vm_id_max" "")
+if should_prompt "vm:vm_id_max"; then
+    echo -n "Maximum VM ID (e.g., 1050) [$stored_vm_id_max]: "
+    read input_vm_id_max
+    vm_id_max=${input_vm_id_max:-"$stored_vm_id_max"}
+else
+    vm_id_max="$stored_vm_id_max"
+    if [ -n "$vm_id_max" ]; then
+        echo -e "Using existing maximum VM ID: ${GREEN}$vm_id_max${NC}"
+    else
+        echo -e "No maximum VM ID set - Proxmox will assign automatically"
+    fi
+fi
 
 # Set VM configuration
 safe_config_set "vm:template" "$vm_template"
 safe_config_set "vm:cores" "$vm_cores"
 safe_config_set "vm:memory" "$vm_memory"
 safe_config_set "vm:disk_size" "$vm_disk_size"
+safe_config_set "vm:disk_storage" "$vm_disk_storage"
 safe_config_set "vm:ssh_user" "$ssh_user"
 safe_config_set "vm:ssh_public_key" "$ssh_public_key"
 safe_config_set "vm:ssh_private_key_path" "$ssh_private_key_path"
 safe_config_set "vm:network_bridge" "$vm_network_bridge"
+
+# Set VM ID range if provided
+if [ -n "$vm_id_min" ]; then
+    safe_config_set "vm:vm_id_min" "$vm_id_min"
+fi
+if [ -n "$vm_id_max" ]; then
+    safe_config_set "vm:vm_id_max" "$vm_id_max"
+fi
 
 # -----------------------------------------------------
 # Configure K3s Cluster Settings
@@ -282,53 +422,98 @@ echo -e "${BLUE}Configuring K3s cluster settings...${NC}"
 
 # Master nodes
 stored_master_count=$(get_config_or_default "k3s:master_count" "")
-echo -n "Number of master nodes [$stored_master_count]: "
-read input_master_count
-master_count=${input_master_count:-"$stored_master_count"}
+if should_prompt "k3s:master_count"; then
+    echo -n "Number of master nodes [$stored_master_count]: "
+    read input_master_count
+    master_count=${input_master_count:-"$stored_master_count"}
+else
+    master_count="$stored_master_count"
+    echo -e "Using existing master count: ${GREEN}$master_count${NC}"
+fi
 
 # Worker nodes
 stored_worker_count=$(get_config_or_default "k3s:worker_count" "")
-echo -n "Number of worker nodes [$stored_worker_count]: "
-read input_worker_count
-worker_count=${input_worker_count:-"$stored_worker_count"}
+if should_prompt "k3s:worker_count"; then
+    echo -n "Number of worker nodes [$stored_worker_count]: "
+    read input_worker_count
+    worker_count=${input_worker_count:-"$stored_worker_count"}
+else
+    worker_count="$stored_worker_count"
+    echo -e "Using existing worker count: ${GREEN}$worker_count${NC}"
+fi
 
 # Name prefixes
 stored_master_prefix=$(get_config_or_default "k3s:master_name_prefix" "")
-echo -n "Master node name prefix [$stored_master_prefix]: "
-read input_master_prefix
-master_prefix=${input_master_prefix:-"$stored_master_prefix"}
+if should_prompt "k3s:master_name_prefix"; then
+    echo -n "Master node name prefix [$stored_master_prefix]: "
+    read input_master_prefix
+    master_prefix=${input_master_prefix:-"$stored_master_prefix"}
+else
+    master_prefix="$stored_master_prefix"
+    echo -e "Using existing master prefix: ${GREEN}$master_prefix${NC}"
+fi
 
 stored_worker_prefix=$(get_config_or_default "k3s:worker_name_prefix" "")
-echo -n "Worker node name prefix [$stored_worker_prefix]: "
-read input_worker_prefix
-worker_prefix=${input_worker_prefix:-"$stored_worker_prefix"}
+if should_prompt "k3s:worker_name_prefix"; then
+    echo -n "Worker node name prefix [$stored_worker_prefix]: "
+    read input_worker_prefix
+    worker_prefix=${input_worker_prefix:-"$stored_worker_prefix"}
+else
+    worker_prefix="$stored_worker_prefix"
+    echo -e "Using existing worker prefix: ${GREEN}$worker_prefix${NC}"
+fi
 
 # Resource allocation
 stored_master_cores=$(get_config_or_default "k3s:master_cores" "")
-echo -n "Master node cores [$stored_master_cores]: "
-read input_master_cores
-master_cores=${input_master_cores:-"$stored_master_cores"}
+if should_prompt "k3s:master_cores"; then
+    echo -n "Master node cores [$stored_master_cores]: "
+    read input_master_cores
+    master_cores=${input_master_cores:-"$stored_master_cores"}
+else
+    master_cores="$stored_master_cores"
+    echo -e "Using existing master cores: ${GREEN}$master_cores${NC}"
+fi
 
 stored_master_memory=$(get_config_or_default "k3s:master_memory" "")
-echo -n "Master node memory in MB [$stored_master_memory]: "
-read input_master_memory
-master_memory=${input_master_memory:-"$stored_master_memory"}
+if should_prompt "k3s:master_memory"; then
+    echo -n "Master node memory in MB [$stored_master_memory]: "
+    read input_master_memory
+    master_memory=${input_master_memory:-"$stored_master_memory"}
+else
+    master_memory="$stored_master_memory"
+    echo -e "Using existing master memory: ${GREEN}$master_memory${NC}"
+fi
 
 stored_worker_cores=$(get_config_or_default "k3s:worker_cores" "")
-echo -n "Worker node cores [$stored_worker_cores]: "
-read input_worker_cores
-worker_cores=${input_worker_cores:-"$stored_worker_cores"}
+if should_prompt "k3s:worker_cores"; then
+    echo -n "Worker node cores [$stored_worker_cores]: "
+    read input_worker_cores
+    worker_cores=${input_worker_cores:-"$stored_worker_cores"}
+else
+    worker_cores="$stored_worker_cores"
+    echo -e "Using existing worker cores: ${GREEN}$worker_cores${NC}"
+fi
 
 stored_worker_memory=$(get_config_or_default "k3s:worker_memory" "")
-echo -n "Worker node memory in MB [$stored_worker_memory]: "
-read input_worker_memory
-worker_memory=${input_worker_memory:-"$stored_worker_memory"}
+if should_prompt "k3s:worker_memory"; then
+    echo -n "Worker node memory in MB [$stored_worker_memory]: "
+    read input_worker_memory
+    worker_memory=${input_worker_memory:-"$stored_worker_memory"}
+else
+    worker_memory="$stored_worker_memory"
+    echo -e "Using existing worker memory: ${GREEN}$worker_memory${NC}"
+fi
 
 # K3s version
 stored_k3s_version=$(get_config_or_default "k3s:version" "")
-echo -n "K3s version [$stored_k3s_version]: "
-read input_k3s_version
-k3s_version=${input_k3s_version:-"$stored_k3s_version"}
+if should_prompt "k3s:version"; then
+    echo -n "K3s version [$stored_k3s_version]: "
+    read input_k3s_version
+    k3s_version=${input_k3s_version:-"$stored_k3s_version"}
+else
+    k3s_version="$stored_k3s_version"
+    echo -e "Using existing K3s version: ${GREEN}$k3s_version${NC}"
+fi
 
 # Static IP configuration
 stored_use_static_ips=$(get_config_or_default "k3s:use_static_ips" "")
@@ -340,27 +525,47 @@ elif [[ "$stored_use_static_ips" == "false" ]]; then
     stored_use_static_ips="n"
 fi
 
-echo -n "Do you want to use static IPs for the VMs? (y/n) [$stored_use_static_ips]: "
-read input_use_static_ips
-use_static_ips=${input_use_static_ips:-"$stored_use_static_ips"}
+if should_prompt "k3s:use_static_ips"; then
+    echo -n "Do you want to use static IPs for the VMs? (y/n) [$stored_use_static_ips]: "
+    read input_use_static_ips
+    use_static_ips=${input_use_static_ips:-"$stored_use_static_ips"}
+else
+    use_static_ips="$stored_use_static_ips"
+    echo -e "Using existing static IP setting: ${GREEN}$use_static_ips${NC}"
+fi
 
 if [[ "$use_static_ips" == "y" ]]; then
     safe_config_set "k3s:use_static_ips" "true"
     
     stored_ip_network=$(get_config_or_default "k3s:ip_network" "")
-    echo -n "IP network CIDR [$stored_ip_network]: "
-    read input_ip_network
-    ip_network=${input_ip_network:-"$stored_ip_network"}
+    if should_prompt "k3s:ip_network"; then
+        echo -n "IP network CIDR [$stored_ip_network]: "
+        read input_ip_network
+        ip_network=${input_ip_network:-"$stored_ip_network"}
+    else
+        ip_network="$stored_ip_network"
+        echo -e "Using existing IP network: ${GREEN}$ip_network${NC}"
+    fi
     
     stored_ip_gateway=$(get_config_or_default "k3s:ip_gateway" "")
-    echo -n "IP gateway [$stored_ip_gateway]: "
-    read input_ip_gateway
-    ip_gateway=${input_ip_gateway:-"$stored_ip_gateway"}
+    if should_prompt "k3s:ip_gateway"; then
+        echo -n "IP gateway [$stored_ip_gateway]: "
+        read input_ip_gateway
+        ip_gateway=${input_ip_gateway:-"$stored_ip_gateway"}
+    else
+        ip_gateway="$stored_ip_gateway"
+        echo -e "Using existing IP gateway: ${GREEN}$ip_gateway${NC}"
+    fi
     
     stored_ip_start=$(get_config_or_default "k3s:ip_start" "")
-    echo -n "Starting IP offset (e.g., 100 for 192.168.1.100) [$stored_ip_start]: "
-    read input_ip_start
-    ip_start=${input_ip_start:-"$stored_ip_start"}
+    if should_prompt "k3s:ip_start"; then
+        echo -n "Starting IP offset (e.g., 100 for 192.168.1.100) [$stored_ip_start]: "
+        read input_ip_start
+        ip_start=${input_ip_start:-"$stored_ip_start"}
+    else
+        ip_start="$stored_ip_start"
+        echo -e "Using existing IP start: ${GREEN}$ip_start${NC}"
+    fi
     
     safe_config_set "k3s:ip_network" "$ip_network"
     safe_config_set "k3s:ip_gateway" "$ip_gateway"
@@ -382,9 +587,14 @@ safe_config_set "k3s:version" "$k3s_version"
 
 # Note: Using the special -- syntax for values that start with -
 stored_install_args=$(get_config_or_default "k3s:install_args" "")
-echo -n "K3s install args [$stored_install_args]: "
-read input_install_args
-install_args=${input_install_args:-"$stored_install_args"}
+if should_prompt "k3s:install_args"; then
+    echo -n "K3s install args [$stored_install_args]: "
+    read input_install_args
+    install_args=${input_install_args:-"$stored_install_args"}
+else
+    install_args="$stored_install_args"
+    echo -e "Using existing K3s install args: ${GREEN}$install_args${NC}"
+fi
 
 safe_config_set "k3s:install_args" "$install_args"
 
@@ -394,19 +604,34 @@ safe_config_set "k3s:install_args" "$install_args"
 echo -e "${BLUE}Configuring Ansible settings...${NC}"
 
 stored_repo_url=$(get_config_or_default "ansible:repo_url" "")
-echo -n "Ansible repository URL [$stored_repo_url]: "
-read input_repo_url
-ansible_repo_url=${input_repo_url:-"$stored_repo_url"}
+if should_prompt "ansible:repo_url"; then
+    echo -n "Ansible repository URL [$stored_repo_url]: "
+    read input_repo_url
+    ansible_repo_url=${input_repo_url:-"$stored_repo_url"}
+else
+    ansible_repo_url="$stored_repo_url"
+    echo -e "Using existing Ansible repo URL: ${GREEN}$ansible_repo_url${NC}"
+fi
 
 stored_repo_branch=$(get_config_or_default "ansible:repo_branch" "")
-echo -n "Ansible repository branch [$stored_repo_branch]: "
-read input_repo_branch
-ansible_repo_branch=${input_repo_branch:-"$stored_repo_branch"}
+if should_prompt "ansible:repo_branch"; then
+    echo -n "Ansible repository branch [$stored_repo_branch]: "
+    read input_repo_branch
+    ansible_repo_branch=${input_repo_branch:-"$stored_repo_branch"}
+else
+    ansible_repo_branch="$stored_repo_branch"
+    echo -e "Using existing Ansible repo branch: ${GREEN}$ansible_repo_branch${NC}"
+fi
 
 stored_local_path=$(get_config_or_default "ansible:local_path" "")
-echo -n "Ansible local path [$stored_local_path]: "
-read input_local_path
-ansible_local_path=${input_local_path:-"$stored_local_path"}
+if should_prompt "ansible:local_path"; then
+    echo -n "Ansible local path [$stored_local_path]: "
+    read input_local_path
+    ansible_local_path=${input_local_path:-"$stored_local_path"}
+else
+    ansible_local_path="$stored_local_path"
+    echo -e "Using existing Ansible local path: ${GREEN}$ansible_local_path${NC}"
+fi
 
 stored_cache_repo=$(get_config_or_default "ansible:cache_repo" "")
 
@@ -417,9 +642,14 @@ elif [[ "$stored_cache_repo" == "false" ]]; then
     stored_cache_repo="n"
 fi
 
-echo -n "Cache the Ansible repository locally? (y/n) [$stored_cache_repo]: "
-read input_cache_repo
-ansible_cache_repo=${input_cache_repo:-"$stored_cache_repo"}
+if should_prompt "ansible:cache_repo"; then
+    echo -n "Cache the Ansible repository locally? (y/n) [$stored_cache_repo]: "
+    read input_cache_repo
+    ansible_cache_repo=${input_cache_repo:-"$stored_cache_repo"}
+else
+    ansible_cache_repo="$stored_cache_repo"
+    echo -e "Using existing Ansible cache repo setting: ${GREEN}$ansible_cache_repo${NC}"
+fi
 
 if [[ "$ansible_cache_repo" == "y" ]]; then
     ansible_cache_repo_bool="true"
@@ -440,33 +670,53 @@ safe_config_set "ansible:cache_repo" "$ansible_cache_repo_bool"
 echo -e "${BLUE}Configuring Ansible extra variables (all.yml)...${NC}"
 
 stored_timezone=$(get_config_or_default "ansible:system_timezone" "")
-echo -n "System timezone [$stored_timezone]: "
-read input_timezone
-system_timezone=${input_timezone:-"$stored_timezone"}
+if should_prompt "ansible:system_timezone"; then
+    echo -n "System timezone [$stored_timezone]: "
+    read input_timezone
+    system_timezone=${input_timezone:-"$stored_timezone"}
+else
+    system_timezone="$stored_timezone"
+    echo -e "Using existing system timezone: ${GREEN}$system_timezone${NC}"
+fi
 
 safe_config_set "ansible:system_timezone" "$system_timezone"
 
 # Load balancer IP range
 stored_lb_range=$(get_config_or_default "ansible:metal_lb_ip_range" "")
-echo -n "MetalLB IP range for LoadBalancer services [$stored_lb_range]: "
-read input_lb_range
-metal_lb_ip_range=${input_lb_range:-"$stored_lb_range"}
+if should_prompt "ansible:metal_lb_ip_range"; then
+    echo -n "MetalLB IP range for LoadBalancer services [$stored_lb_range]: "
+    read input_lb_range
+    metal_lb_ip_range=${input_lb_range:-"$stored_lb_range"}
+else
+    metal_lb_ip_range="$stored_lb_range"
+    echo -e "Using existing MetalLB IP range: ${GREEN}$metal_lb_ip_range${NC}"
+fi
 
 safe_config_set "ansible:metal_lb_ip_range" "$metal_lb_ip_range"
 
 # Network interface
 stored_iface=$(get_config_or_default "ansible:flannel_iface" "")
-echo -n "Network interface for K3s [$stored_iface]: "
-read input_iface
-flannel_iface=${input_iface:-"$stored_iface"}
+if should_prompt "ansible:flannel_iface"; then
+    echo -n "Network interface for K3s [$stored_iface]: "
+    read input_iface
+    flannel_iface=${input_iface:-"$stored_iface"}
+else
+    flannel_iface="$stored_iface"
+    echo -e "Using existing network interface: ${GREEN}$flannel_iface${NC}"
+fi
 
 safe_config_set "ansible:flannel_iface" "$flannel_iface"
 
 # Pod CIDR
 stored_cidr=$(get_config_or_default "ansible:cluster_cidr" "")
-echo -n "Pod CIDR range [$stored_cidr]: "
-read input_cidr
-cluster_cidr=${input_cidr:-"$stored_cidr"}
+if should_prompt "ansible:cluster_cidr"; then
+    echo -n "Pod CIDR range [$stored_cidr]: "
+    read input_cidr
+    cluster_cidr=${input_cidr:-"$stored_cidr"}
+else
+    cluster_cidr="$stored_cidr"
+    echo -e "Using existing Pod CIDR range: ${GREEN}$cluster_cidr${NC}"
+fi
 
 safe_config_set "ansible:cluster_cidr" "$cluster_cidr"
 
@@ -489,10 +739,25 @@ elif [[ "$has_cilium" == "true" ]]; then
     echo -e "${YELLOW}Detected existing Cilium configuration${NC}"
 fi
 
+# Define a pseudo key for tracking CNI choice
+cni_key="ansible:cni_choice"
+
 # Prompt directly
-echo -n "Choose a CNI [$cni_default]: "
-read input_cni
-cni_choice=${input_cni:-"$cni_default"}
+if should_prompt "$cni_key"; then
+    echo -n "Choose a CNI [$cni_default]: "
+    read input_cni
+    cni_choice=${input_cni:-"$cni_default"}
+else
+    cni_choice="$cni_default"
+    if [[ "$cni_choice" == "1" ]]; then
+        cni_name="Flannel (default)"
+    elif [[ "$cni_choice" == "2" ]]; then
+        cni_name="Calico"
+    elif [[ "$cni_choice" == "3" ]]; then
+        cni_name="Cilium"
+    fi
+    echo -e "Using existing CNI: ${GREEN}$cni_name${NC}"
+fi
 
 if [[ "$cni_choice" == "2" ]]; then
     echo -e "${YELLOW}Configuring Calico CNI...${NC}"
@@ -538,10 +803,18 @@ fi
 echo -e "\n${BLUE}=== Configuration Complete ===${NC}"
 deploy_now_default="y"
 
+# Define a pseudo key for deployment choice
+deploy_key="deployment:deploy_now"
+
 # Prompt directly
-echo -n "Would you like to deploy the stack now? (y/n) [$deploy_now_default]: "
-read input_deploy_now
-deploy_now=${input_deploy_now:-"$deploy_now_default"}
+if should_prompt "$deploy_key"; then
+    echo -n "Would you like to deploy the stack now? (y/n) [$deploy_now_default]: "
+    read input_deploy_now
+    deploy_now=${input_deploy_now:-"$deploy_now_default"}
+else
+    deploy_now="$deploy_now_default"
+    echo -e "Using default deployment choice: ${GREEN}Yes${NC}"
+fi
 
 if [[ "$deploy_now" == "y" ]]; then
     echo -e "${BLUE}Deploying Pulumi stack...${NC}"

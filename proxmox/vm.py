@@ -20,11 +20,13 @@ class ProxmoxVM:
         memory: int = 4096,
         description: str = None,
         disk_size: str = "20G",
+        disk_storage: str = "local-lvm",
         ssh_public_key: str = None,
         network_bridge: str = "vmbr0",
         ip_address: Optional[str] = None,
         gateway: Optional[str] = None,
         dns_server: str = "8.8.8.8",
+        vm_id: Optional[int] = None,
     ):
         """
         Creates a new VM from a template in Proxmox.
@@ -38,11 +40,13 @@ class ProxmoxVM:
             memory: Memory in MB
             description: VM description
             disk_size: Disk size (e.g., "20G")
+            disk_storage: Storage location ID in Proxmox (e.g., "local-lvm", "ceph")
             ssh_public_key: SSH public key for cloud-init
             network_bridge: Network bridge to use
             ip_address: Static IP address in CIDR notation (e.g., "192.168.1.100/24")
             gateway: Network gateway (required if ip_address is set)
             dns_server: DNS server
+            vm_id: Specific VM ID to assign to the new VM
         """
         self.provider = provider
         self.name = name
@@ -51,16 +55,26 @@ class ProxmoxVM:
         
         # Extract VM ID from template_id
         if "/" in template_id:
-            vm_id = int(template_id.split("/")[1])
+            template_vm_id = int(template_id.split("/")[1])
         else:
-            vm_id = int(template_id)
+            template_vm_id = int(template_id)
         
+        # Convert disk size to GB integer (e.g., "20G" -> 20)
+        size_gb = 0
+        if disk_size:
+            try:
+                # Handle formats like "20G" or "20GB" by removing all non-numeric characters
+                size_gb = int(''.join(filter(str.isdigit, disk_size)))
+            except ValueError:
+                # Default to 20 if conversion fails
+                size_gb = 20
+                
         # Prepare VM arguments
         vm_args = {
             "node_name": node,
             "name": name,
             "clone": {
-                "vm_id": vm_id,
+                "vm_id": template_vm_id,
                 "full": True,
             },
             "cpu": {
@@ -80,6 +94,23 @@ class ProxmoxVM:
             },
             "on_boot": True,
         }
+        
+        # Add specific VM ID if provided
+        if vm_id is not None:
+            vm_args["vm_id"] = vm_id
+            
+        # Add disk configuration with a size that's guaranteed to be larger
+        # than the template's disk size (which is around 13GB based on the error)
+        if size_gb:
+            # Make sure we have a size of at least 15GB to be safe
+            size_gb = max(size_gb, 15)
+            vm_args["disks"] = [
+                {
+                    "interface": "scsi0",
+                    "datastore_id": disk_storage,
+                    "size": size_gb,
+                }
+            ]
         
         # Add description if provided
         if description:
@@ -140,6 +171,7 @@ def create_proxmox_vm(
     node: str,
     template_id: str,
     ip_config: Dict[str, str] = None,
+    vm_id: Optional[int] = None,
 ) -> ProxmoxVM:
     """
     Create a Proxmox VM using the specified configuration.
@@ -150,6 +182,7 @@ def create_proxmox_vm(
         node: Node name
         template_id: Template ID
         ip_config: Optional IP configuration (ip_address, gateway, etc.)
+        vm_id: Specific VM ID to assign to the new VM
         
     Returns:
         ProxmoxVM: The created VM instance
@@ -171,6 +204,8 @@ def create_proxmox_vm(
         memory=config["memory"],
         description=config.get("description", ""),
         disk_size=config.get("disk_size", "20G"),
+        disk_storage=config.get("disk_storage", "local-lvm"),
         ssh_public_key=config.get("ssh_public_key", None),
+        vm_id=vm_id,
         **ip_args
     ) 
