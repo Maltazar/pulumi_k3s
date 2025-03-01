@@ -1,5 +1,7 @@
 # Pulumi Proxmox K3s Cluster Setup
 
+!!! DOES NOT WORK YET!
+
 This Pulumi project automates setting up a Kubernetes cluster on Proxmox VMs using K3s and Ansible. It provides a complete infrastructure-as-code solution for:
 
 1. Creating multiple Proxmox VMs (masters and workers)
