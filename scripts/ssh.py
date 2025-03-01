@@ -19,6 +19,7 @@ class SSHClient:
         port: int = 22,
         private_key_path: Optional[str] = None,
         password: Optional[str] = None,
+        key_passphrase: Optional[str] = None,
         timeout: int = 60,
     ):
         """
@@ -30,6 +31,7 @@ class SSHClient:
             port: SSH port
             private_key_path: Path to private key file (if using key-based auth)
             password: Password (if using password auth)
+            key_passphrase: Passphrase for the private key (if the key is password-protected)
             timeout: Connection timeout in seconds
         """
         self.host = host
@@ -37,6 +39,7 @@ class SSHClient:
         self.port = port
         self.private_key_path = private_key_path
         self.password = password
+        self.key_passphrase = key_passphrase
         self.timeout = timeout
         self.client = None
     
@@ -57,7 +60,10 @@ class SSHClient:
         for attempt in range(retry_attempts):
             try:
                 if self.private_key_path:
-                    key = paramiko.RSAKey.from_private_key_file(os.path.expanduser(self.private_key_path))
+                    key = paramiko.RSAKey.from_private_key_file(
+                        os.path.expanduser(self.private_key_path),
+                        password=self.key_passphrase
+                    )
                     self.client.connect(
                         hostname=self.host,
                         port=self.port,

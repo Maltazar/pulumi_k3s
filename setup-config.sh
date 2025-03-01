@@ -285,6 +285,24 @@ if [ ! -f "$ssh_private_key_path" ]; then
     fi
 fi
 
+# Check if the key requires a passphrase
+if should_prompt "vm:ssh_key_passphrase"; then
+    echo -e "${YELLOW}Does your SSH key require a passphrase? (y/n)${NC}"
+    read -r has_passphrase
+    if [[ "$has_passphrase" == "y" ]]; then
+        echo -n "Enter SSH key passphrase: "
+        read -s ssh_key_passphrase
+        echo
+        
+        # Set the passphrase in Pulumi config as a secret
+        safe_config_set "vm:ssh_key_passphrase" "$ssh_key_passphrase" "true"
+    fi
+else
+    if pulumi config get vm:ssh_key_passphrase &>/dev/null; then
+        echo -e "Using existing secret for ${GREEN}vm:ssh_key_passphrase${NC}"
+    fi
+fi
+
 # Get public key content
 if [ -f "${ssh_private_key_path}.pub" ]; then
     default_ssh_public_key=$(cat "${ssh_private_key_path}.pub")
@@ -306,12 +324,98 @@ else
     display_key="$stored_ssh_public_key"
 fi
 if should_prompt "vm:ssh_public_key"; then
+    echo -e "SSH public key (can be a file path like ~/.ssh/id_rsa.pub or the actual key content)"
     echo -n "SSH public key [$display_key]: "
     read input_ssh_public_key
     ssh_public_key=${input_ssh_public_key:-"$stored_ssh_public_key"}
 else
     ssh_public_key="$stored_ssh_public_key"
     echo -e "Using existing SSH public key: ${GREEN}${display_key}${NC}"
+fi
+
+# Admin user configuration
+echo -e "${YELLOW}Configure VM admin user (optional):${NC}"
+stored_create_admin=$(get_config_or_default "vm:create_admin_user" "false")
+if [[ "$stored_create_admin" == "true" ]]; then
+    stored_create_admin="y"
+else
+    stored_create_admin="n"
+fi
+
+if should_prompt "vm:create_admin_user"; then
+    echo -n "Create a sudo admin user? (y/n) [$stored_create_admin]: "
+    read input_create_admin
+    create_admin=${input_create_admin:-"$stored_create_admin"}
+else
+    create_admin="$stored_create_admin"
+    echo -e "Using existing admin user setting: ${GREEN}$create_admin${NC}"
+fi
+
+if [[ "$create_admin" == "y" ]]; then
+    safe_config_set "vm:create_admin_user" "true"
+    
+    # Admin username
+    stored_admin_username=$(get_config_or_default "vm:admin_username" "admin")
+    if should_prompt "vm:admin_username"; then
+        echo -n "Admin username [$stored_admin_username]: "
+        read input_admin_username
+        admin_username=${input_admin_username:-"$stored_admin_username"}
+    else
+        admin_username="$stored_admin_username"
+        echo -e "Using existing admin username: ${GREEN}$admin_username${NC}"
+    fi
+    
+    # Admin password (optional)
+    if should_prompt "vm:admin_password"; then
+        echo -e "${YELLOW}Set an admin password? (y/n)${NC}"
+        read -r set_admin_password
+        if [[ "$set_admin_password" == "y" ]]; then
+            echo -n "Admin password: "
+            read -s admin_password
+            echo
+            
+            # Set the admin password in Pulumi config as a secret
+            safe_config_set "vm:admin_password" "$admin_password" "true"
+        fi
+    else
+        if pulumi config get vm:admin_password &>/dev/null; then
+            echo -e "Using existing secret for ${GREEN}vm:admin_password${NC}"
+        fi
+    fi
+    
+    # Admin SSH key (optional - defaults to the same as the VM SSH key)
+    stored_admin_ssh_key=$(get_config_or_default "vm:admin_ssh_key" "$ssh_public_key")
+    if [ ${#stored_admin_ssh_key} -gt 40 ]; then
+        # If key is long, only show beginning
+        display_admin_key="${stored_admin_ssh_key:0:40}..."
+    else
+        display_admin_key="$stored_admin_ssh_key"
+    fi
+    
+    if should_prompt "vm:admin_ssh_key"; then
+        echo -e "${YELLOW}Use same SSH key for admin user? (y/n) [y]:${NC}"
+        read -r use_same_key
+        if [[ "$use_same_key" != "y" && "$use_same_key" != "" ]]; then
+            echo -e "Admin SSH public key (can be a file path like ~/.ssh/id_rsa.pub or the actual key content)"
+            echo -n "Admin SSH public key: "
+            read admin_ssh_key
+            safe_config_set "vm:admin_ssh_key" "$admin_ssh_key"
+        else
+            # Use the same SSH key
+            safe_config_set "vm:admin_ssh_key" "$ssh_public_key"
+        fi
+    else
+        echo -e "Using existing admin SSH key: ${GREEN}${display_admin_key}${NC}"
+    fi
+    
+    # Set admin username
+    safe_config_set "vm:admin_username" "$admin_username"
+else
+    safe_config_set "vm:create_admin_user" "false"
+    # Remove any existing admin user config
+    pulumi config rm vm:admin_username 2>/dev/null || true
+    pulumi config rm vm:admin_password 2>/dev/null || true
+    pulumi config rm vm:admin_ssh_key 2>/dev/null || true
 fi
 
 # VM Resources
@@ -366,6 +470,21 @@ else
     echo -e "Using existing VM network bridge: ${GREEN}$vm_network_bridge${NC}"
 fi
 
+# Add VLAN tag prompt (new)
+stored_vlan_tag=$(get_config_or_default "vm:vlan_tag" "")
+if should_prompt "vm:vlan_tag"; then
+    echo -n "VM network VLAN tag (leave empty for no VLAN) [$stored_vlan_tag]: "
+    read input_vlan_tag
+    vm_vlan_tag=${input_vlan_tag:-"$stored_vlan_tag"}
+else
+    vm_vlan_tag="$stored_vlan_tag"
+    if [ -n "$vm_vlan_tag" ]; then
+        echo -e "Using existing VM VLAN tag: ${GREEN}$vm_vlan_tag${NC}"
+    else
+        echo -e "No VLAN tag configured"
+    fi
+fi
+
 # VM ID range (optional)
 echo -e "${YELLOW}VM ID range (optional - leave empty to let Proxmox assign IDs automatically):${NC}"
 stored_vm_id_min=$(get_config_or_default "vm:vm_id_min" "")
@@ -406,6 +525,12 @@ safe_config_set "vm:ssh_user" "$ssh_user"
 safe_config_set "vm:ssh_public_key" "$ssh_public_key"
 safe_config_set "vm:ssh_private_key_path" "$ssh_private_key_path"
 safe_config_set "vm:network_bridge" "$vm_network_bridge"
+if [ -n "$vm_vlan_tag" ]; then
+    safe_config_set "vm:vlan_tag" "$vm_vlan_tag"
+else
+    # Remove VLAN tag if it exists but is now empty
+    pulumi config rm vm:vlan_tag 2>/dev/null || true
+fi
 
 # Set VM ID range if provided
 if [ -n "$vm_id_min" ]; then
@@ -719,6 +844,36 @@ else
 fi
 
 safe_config_set "ansible:cluster_cidr" "$cluster_cidr"
+
+# Add API server endpoint configuration (new)
+stored_api_endpoint=$(get_config_or_default "ansible:apiserver_endpoint" "")
+if should_prompt "ansible:apiserver_endpoint"; then
+    echo -e "${YELLOW}K3s API Server Endpoint (Virtual IP for Kubernetes API):${NC}"
+    echo -e "This will be used as the virtual IP for accessing the Kubernetes API server"
+    echo -n "API server endpoint [$stored_api_endpoint]: "
+    read input_api_endpoint
+    api_endpoint=${input_api_endpoint:-"$stored_api_endpoint"}
+else
+    api_endpoint="$stored_api_endpoint"
+    if [ -n "$api_endpoint" ]; then
+        echo -e "Using existing API server endpoint: ${GREEN}$api_endpoint${NC}"
+    else
+        echo -e "${RED}No API server endpoint configured - this is required for HA clusters${NC}"
+    fi
+fi
+safe_config_set "ansible:apiserver_endpoint" "$api_endpoint"
+
+# Generate and save k3s_token if it doesn't exist
+stored_k3s_token=$(get_config_or_default "ansible:k3s_token" "")
+if [ -z "$stored_k3s_token" ]; then
+    echo -e "${YELLOW}Generating secure K3s token...${NC}"
+    # Generate a secure random token
+    k3s_token=$(tr -dc 'a-zA-Z0-9' < /dev/urandom | fold -w 32 | head -n 1)
+    safe_config_set --secret "ansible:k3s_token" "$k3s_token"
+    echo -e "${GREEN}K3s token generated and saved securely in Pulumi configuration${NC}"
+else
+    echo -e "${GREEN}Using existing K3s token from configuration${NC}"
+fi
 
 # Network CNI options
 echo -e "${YELLOW}Which CNI would you like to use?${NC}"

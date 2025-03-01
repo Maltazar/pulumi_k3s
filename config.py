@@ -32,8 +32,15 @@ vm_base_config = {
     "vm_id_max": vm_config_obj.get_int("vm_id_max") or None,  # Maximum VM ID to use
     "ssh_public_key": vm_config_obj.require("ssh_public_key"),
     "ssh_private_key_path": vm_config_obj.require("ssh_private_key_path"),
+    "ssh_key_passphrase": vm_config_obj.get_secret("ssh_key_passphrase") or None,  # Passphrase for the SSH key (optional)
     "ssh_user": vm_config_obj.get("ssh_user") or "ubuntu",
     "network_bridge": vm_config_obj.get("network_bridge") or "vmbr0",
+    "start_on_create": vm_config_obj.get_bool("start_on_create") or True,  # Whether to start VMs after creation
+    # Admin user configuration (optional)
+    "create_admin_user": vm_config_obj.get_bool("create_admin_user") or False,
+    "admin_username": vm_config_obj.get("admin_username") or "admin",
+    "admin_password": vm_config_obj.get_secret("admin_password") or None,
+    "admin_ssh_key": vm_config_obj.get("admin_ssh_key") or vm_config_obj.get("ssh_public_key"),  # Defaults to the same key
 }
 
 # K3s Cluster Configuration

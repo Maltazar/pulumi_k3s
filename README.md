@@ -119,14 +119,49 @@ pulumi config set vm:memory 4096                # Default memory per VM (MB)
 pulumi config set vm:disk_size 20G              # Default disk size
 pulumi config set vm:disk_storage local-lvm     # Storage location in Proxmox
 pulumi config set vm:ssh_user ubuntu            # Username in the template
-pulumi config set vm:ssh_public_key "$(cat ~/.ssh/id_rsa.pub)"
+
+# SSH keys can be specified either as file paths or as the actual key content
+pulumi config set vm:ssh_public_key "$(cat ~/.ssh/id_rsa.pub)"  # Using content from file
+# OR directly specify the file path:
+pulumi config set vm:ssh_public_key ~/.ssh/id_rsa.pub  # Will be read automatically
+
 pulumi config set vm:ssh_private_key_path ~/.ssh/id_rsa
+pulumi config set --secret vm:ssh_key_passphrase "your-key-passphrase"  # Optional: If your key has a passphrase
 pulumi config set vm:network_bridge vmbr0       # Network bridge to use
+pulumi config set vm:vlan_tag 10                # Optional: VLAN tag for network interfaces
 
 # Optional: VM ID range configuration
 pulumi config set vm:vm_id_min 1000             # Minimum VM ID to use
 pulumi config set vm:vm_id_max 1050             # Maximum VM ID to use
+
+# Optional: Admin user configuration
+pulumi config set vm:create_admin_user true     # Create admin user on the VMs
+pulumi config set vm:admin_username k3s-admin   # Username for the admin user
+pulumi config set --secret vm:admin_password "secure-password"  # Optional admin password
+
+# Admin SSH key can be specified either as a file path or as the actual key content
+pulumi config set vm:admin_ssh_key "$(cat ~/.ssh/id_rsa.pub)"  # Using content from file
+# OR directly specify the file path:
+pulumi config set vm:admin_ssh_key ~/.ssh/id_rsa.pub  # Will be read automatically
 ```
+
+The provisioning process will:
+1. Create and configure VMs with the specified settings
+2. Install essential packages including qemu-guest-agent
+3. Set up an optional admin user with sudo privileges (if configured)
+4. Install and configure K3s across all nodes
+
+### Admin User Feature
+
+When enabled, the admin user feature:
+
+- Creates a new user with sudo privileges on each VM
+- Sets up passwordless sudo for the admin user (always enabled)
+- Requires either a password or SSH key (or both) for authentication
+- Uses this admin user for all operations after provisioning, including Ansible
+- Improves security by avoiding the default cloud-init user for ongoing operations
+
+If you don't provide a password for the admin user, the user will be SSH key only (passwordless login). This is often more secure than password-based authentication. You must provide an SSH key in this case.
 
 ### K3s Cluster Configuration
 
@@ -179,6 +214,10 @@ pulumi config set ansible:metal_lb_ip_range "192.168.1.150-192.168.1.160"  # IP 
 # Networking settings
 pulumi config set ansible:flannel_iface "eth0"  # Network interface for K3s
 pulumi config set ansible:cluster_cidr "10.42.0.0/16"  # Pod CIDR range
+
+# K3s Cluster Settings (Required for HA setup)
+pulumi config set ansible:apiserver_endpoint "192.168.1.200"  # Virtual IP for K3s API server
+pulumi config set --secret ansible:k3s_token "your-secure-token"  # Cluster token (will be auto-generated if not provided)
 
 # K3s server settings
 pulumi config set ansible:extra_server_args "--disable servicelb --disable traefik --node-taint node-role.kubernetes.io/master=true:NoSchedule"
@@ -305,6 +344,35 @@ You can customize the deployment by modifying the configuration values or editin
 - If Ansible inventory files are incorrectly generated, check the `~/k3s-ansible/inventory/my-cluster` directory
 - To manually run the Ansible playbook after deployment: `cd ~/k3s-ansible && ansible-playbook -i inventory/my-cluster site.yml -b --become-user=root`
 - Check Ansible logs for any errors by examining the output during the Pulumi deployment 
+
+### Network Configuration
+
+- **VLAN Tags**: If you're using VLAN tags, ensure that your Proxmox host and network switches are properly configured to pass VLAN traffic. The VMs will be created with the specified VLAN tag on their network interfaces.
+
+- **API Server Endpoint**: For HA setups, the `apiserver_endpoint` must be a virtual IP (VIP) that can float between master nodes. This IP should be:
+  - In the same subnet as your master nodes
+  - Not assigned to any physical device
+  - Reachable from all nodes in the cluster
+  - If using MetalLB, make sure the VIP is outside the MetalLB range
+
+- **K3s Token**: The k3s_token is used for node authentication to join the cluster. For security:
+  - The token is automatically generated if not provided
+  - A manually set token can be more easily remembered for future manual operations
+  - The token is stored securely in Pulumi's configuration
+
+### VM Power Operations
+
+When managing VMs through this Pulumi program, it's important to understand how power operations work:
+
+- **Before Guest Agent Installation**: 
+  - The program uses `stop` and `reset` operations for VMs that don't have the QEMU guest agent installed yet
+  - These are "hard" power operations similar to unplugging a computer
+
+- **After Guest Agent Installation**:
+  - Once the QEMU guest agent is installed during provisioning, the program automatically switches to `shutdown` and `reboot` operations
+  - These are "graceful" power operations that allow the OS to shut down properly
+
+If you're seeing timeout errors during deployment when Pulumi tries to shut down or reboot VMs, it could be because the guest agent isn't installed yet. The program now handles this automatically, but be aware that the first deployment might behave differently from subsequent ones.
 
 ## Managing Pulumi State
 
